@@ -79,7 +79,6 @@ class MainActivity : FlutterActivity() {
             throw IllegalArgumentException("Input Mat is empty!")
         }
 
-        // Ensure the input image is in grayscale
         val gray = Mat()
         if (src.channels() > 1) {
             Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
@@ -87,19 +86,15 @@ class MainActivity : FlutterActivity() {
             src.copyTo(gray)
         }
 
-        // Apply Laplacian filter
         val laplacian = Mat()
         Imgproc.Laplacian(gray, laplacian, CvType.CV_64F)
 
-        // Calculate variance
         val mean = MatOfDouble()
         val stddev = MatOfDouble()
         Core.meanStdDev(laplacian, mean, stddev)
 
-        // Variance is the square of the standard deviation
         val variance = Math.pow(stddev[0, 0][0], 2.0)
 
-        // Release resources
         gray.release()
         laplacian.release()
 
@@ -111,38 +106,29 @@ private fun calculateBrightnessPercentage(mat: Mat): Double {
     val gray = Mat()
     Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
 
-    // Calculate brightness as the mean intensity value
     val brightness = Core.mean(gray).`val`[0]
 
-    // Normalize brightness to a percentage (assuming 0-255 intensity range)
     val brightnessPercentage = (brightness / 255.0) * 100
 
-    // Release resources
     gray.release()
 
     return brightnessPercentage
 }
 
 fun calculateGlarePercentage(mat: Mat): Double {
-     // Ensure the input image is in grayscale
      val gray = Mat()
      Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
  
-     // Threshold the grayscale image to identify bright regions (glare)
-     val thresholdValue = 240.0 // Adjust this value based on your application
+     val thresholdValue = 240.0 
      val binary = Mat()
      Imgproc.threshold(gray, binary, thresholdValue, 255.0, Imgproc.THRESH_BINARY)
  
-     // Count the number of pixels identified as glare
      val glarePixels = Core.countNonZero(binary)
  
-     // Calculate the total number of pixels in the image
      val totalPixels = mat.rows() * mat.cols()
  
-     // Compute glare percentage
      val glarePercentage = (glarePixels.toDouble() / totalPixels.toDouble()) * 100
  
-     // Release resources
      gray.release()
      binary.release()
  
