@@ -40,34 +40,33 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun analyzeImage(imageBytes: ByteArray): Map<String, Any>? {
-        return try {
-            val inputStream = ByteArrayInputStream(imageBytes)
-            val bitmap = BitmapFactory.decodeStream(inputStream) ?: return null
+     return try {
+         val inputStream = ByteArrayInputStream(imageBytes)
+         val bitmap = BitmapFactory.decodeStream(inputStream) ?: return null
+ 
+         val mat = Mat()
+         val bmp32 = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+         Utils.bitmapToMat(bmp32, mat)
+ 
+         val aspectRatio = mat.width().toDouble() / mat.height()
+         val brightnessPercentage = calculateBrightnessPercentage(mat)
+         val glarePercentage = calculateGlarePercentage(mat)
+         val laplacianVariance = calculateLaplacianVariance(mat)
 
-            val mat = Mat()
-            val bmp32 = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-            Utils.bitmapToMat(bmp32, mat)
+ 
+         mapOf(
+             "aspectRatio" to aspectRatio,
+             "brightnessPercentage" to brightnessPercentage,
+             "glarePercentage" to glarePercentage,
+             "laplacianVariance" to laplacianVariance,
 
-            val aspectRatio = mat.width().toDouble() / mat.height()
-            val brightness = calculateBrightness(mat)
-            val laplacianVariance = calculateLaplacianVariance(mat)
-            val contrast = calculateContrast(mat)
-            val glare = calculateGlare(mat)
-            val noiseSNR = calculateNoiseSNR(mat)
-
-            mapOf(
-                "aspectRatio" to aspectRatio,
-                "brightness" to brightness,
-                "laplacianVariance" to laplacianVariance,
-                "contrast" to contrast,
-                "glare" to glare,
-                "noiseSNR" to noiseSNR
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
+         )
+     } catch (e: Exception) {
+         e.printStackTrace()
+         null
+     }
+ }
+ 
 
     private fun calculateBrightness(mat: Mat): Double {
         val gray = Mat()
@@ -108,43 +107,45 @@ class MainActivity : FlutterActivity() {
     }
 
 
+private fun calculateBrightnessPercentage(mat: Mat): Double {
+    val gray = Mat()
+    Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
 
+    // Calculate brightness as the mean intensity value
+    val brightness = Core.mean(gray).`val`[0]
 
-    private fun calculateGlare(mat: Mat): Double {
-        val gray = Mat()
-        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
+    // Normalize brightness to a percentage (assuming 0-255 intensity range)
+    val brightnessPercentage = (brightness / 255.0) * 100
 
-        val minMaxLoc = Core.minMaxLoc(gray)
-        return minMaxLoc.maxVal
-    }
+    // Release resources
+    gray.release()
 
-    private fun calculateContrast(mat: Mat): Double {
-        val gray = Mat()
-        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-
-        // Use MatOfDouble for mean and stddev
-        val mean = MatOfDouble()
-        val stddev = MatOfDouble()
-        Core.meanStdDev(gray, mean, stddev)
-
-        return stddev[0, 0][0] // Return standard deviation as contrast
-    }
-
-    private fun calculateNoiseSNR(mat: Mat): Double {
-        val gray = Mat()
-        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-
-        // Use MatOfDouble for mean and stddev
-        val mean = MatOfDouble()
-        val stddev = MatOfDouble()
-        Core.meanStdDev(gray, mean, stddev)
-
-        val meanValue = mean[0, 0][0]
-        val stddevValue = stddev[0, 0][0]
-
-        return if (stddevValue != 0.0) meanValue / stddevValue else 0.0 // Handle divide-by-zero case
-    }
-
+    return brightnessPercentage
 }
 
-
+fun calculateGlarePercentage(mat: Mat): Double {
+     // Ensure the input image is in grayscale
+     val gray = Mat()
+     Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
+ 
+     // Threshold the grayscale image to identify bright regions (glare)
+     val thresholdValue = 240.0 // Adjust this value based on your application
+     val binary = Mat()
+     Imgproc.threshold(gray, binary, thresholdValue, 255.0, Imgproc.THRESH_BINARY)
+ 
+     // Count the number of pixels identified as glare
+     val glarePixels = Core.countNonZero(binary)
+ 
+     // Calculate the total number of pixels in the image
+     val totalPixels = mat.rows() * mat.cols()
+ 
+     // Compute glare percentage
+     val glarePercentage = (glarePixels.toDouble() / totalPixels.toDouble()) * 100
+ 
+     // Release resources
+     gray.release()
+     binary.release()
+ 
+     return glarePercentage
+ }
+}
