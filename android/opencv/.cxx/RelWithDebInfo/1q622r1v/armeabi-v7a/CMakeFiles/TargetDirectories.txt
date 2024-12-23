@@ -1,0 +1,3 @@
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/RelWithDebInfo/1q622r1v/armeabi-v7a/CMakeFiles/opencv_jni_shared.dir
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/RelWithDebInfo/1q622r1v/armeabi-v7a/CMakeFiles/edit_cache.dir
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/RelWithDebInfo/1q622r1v/armeabi-v7a/CMakeFiles/rebuild_cache.dir

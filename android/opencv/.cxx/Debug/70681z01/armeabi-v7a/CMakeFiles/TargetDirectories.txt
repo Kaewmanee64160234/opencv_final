@@ -1,0 +1,3 @@
+C:/OpenCV-android-sdk/sdk/.cxx/Debug/70681z01/armeabi-v7a/CMakeFiles/opencv_jni_shared.dir
+C:/OpenCV-android-sdk/sdk/.cxx/Debug/70681z01/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/OpenCV-android-sdk/sdk/.cxx/Debug/70681z01/armeabi-v7a/CMakeFiles/rebuild_cache.dir

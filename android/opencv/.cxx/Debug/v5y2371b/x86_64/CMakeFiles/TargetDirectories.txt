@@ -1,0 +1,3 @@
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/Debug/v5y2371b/x86_64/CMakeFiles/opencv_jni_shared.dir
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/Debug/v5y2371b/x86_64/CMakeFiles/edit_cache.dir
+D:/cdg/buldWork/final_opencv/android/opencv/.cxx/Debug/v5y2371b/x86_64/CMakeFiles/rebuild_cache.dir
