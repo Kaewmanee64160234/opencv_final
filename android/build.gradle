@@ -1,6 +1,5 @@
 buildscript {
     dependencies {
-        // Replace with the latest version.
         classpath 'com.android.tools.build:gradle:8.1.4'
     }
     repositories {

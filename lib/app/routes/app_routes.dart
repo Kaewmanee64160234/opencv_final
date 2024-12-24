@@ -5,10 +5,12 @@ abstract class Routes {
   Routes._();
   static const HOME = _Paths.HOME;
   static const TEST_NATIVE = _Paths.TEST_NATIVE;
+  static const TSET_REG = _Paths.TSET_REG;
 }
 
 abstract class _Paths {
   _Paths._();
   static const HOME = '/home';
   static const TEST_NATIVE = '/test-native';
+  static const TSET_REG = '/tset-reg';
 }

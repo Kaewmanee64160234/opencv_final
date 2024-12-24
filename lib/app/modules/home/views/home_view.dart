@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'package:final_opencv/app/routes/app_pages.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/home_controller.dart';
@@ -11,12 +11,20 @@ class HomeView extends GetView<HomeController> {
     return Scaffold(
         appBar: AppBar(title: const Text('Image Processing')),
         body: Center(
-          child: ElevatedButton(
-              onPressed: controller.navigateToNativePage,
-              child: Text(
-                'Navigate to Native Page',
-                style: TextStyle(fontSize: 20),
-              )),
+          child: Column(
+            children: [
+              ElevatedButton(
+                  onPressed: controller.navigateToNativePage,
+                  child: Text(
+                    'Navigate to Native Page',
+                    style: TextStyle(fontSize: 20),
+                  )),
+              ElevatedButton(
+                onPressed: () => Get.offNamed(Routes.TSET_REG),
+                child: Text('Navigate to Test Reg'),
+              ),
+            ],
+          ),
           // child: Obx(() {
           //   return Column(
           //     mainAxisAlignment: MainAxisAlignment.center,
