@@ -4,9 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Rect
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.camera.core.*
@@ -14,7 +12,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Text
@@ -94,7 +91,7 @@ class CameraActivity : ComponentActivity() {
                     imageCapture
                 )
             } catch (exc: Exception) {
-                Toast.makeText(context, "Failed to bind camera use cases", Toast.LENGTH_SHORT).show()
+                // Handle camera binding failure
             }
         }
 
@@ -123,7 +120,7 @@ class CameraActivity : ComponentActivity() {
                     .padding(16.dp),
                 onClick = {
                     imageCapture?.let {
-                        captureAndCropRectangleImage(it, rectX, rectY, rectWidth, rectHeight, previewView.width, previewView.height)
+                        captureAndCropToAspectRatio(it, 3.37f / 2.125f, rectX, rectY, rectWidth, rectHeight, previewView.width, previewView.height)
                     }
                 }
             ) {
@@ -132,8 +129,9 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
-    private fun captureAndCropRectangleImage(
+    private fun captureAndCropToAspectRatio(
         imageCapture: ImageCapture,
+        aspectRatio: Float, // Aspect ratio, e.g., 3.37f / 2.125f
         rectX: Int,
         rectY: Int,
         rectWidth: Int,
@@ -141,13 +139,13 @@ class CameraActivity : ComponentActivity() {
         previewWidth: Int,
         previewHeight: Int
     ) {
-        // Define the output file
+        // Define the output file for the temporary full image
         val photoFile = File(
             externalMediaDirs.firstOrNull(),
             "TEMP_IMG_${System.currentTimeMillis()}.jpg"
         )
 
-        // Set up output options to save the image
+        // Set up output options to save the temporary image
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         // Take the picture
@@ -159,48 +157,49 @@ class CameraActivity : ComponentActivity() {
                     // Load the captured image
                     val fullImageBitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
 
-                    // Calculate scale factors between preview and captured image
-                    val scaleX = fullImageBitmap.width.toFloat() / previewWidth
-                    val scaleY = fullImageBitmap.height.toFloat() / previewHeight
+                    // Crop the image to the specified aspect ratio
+                    val croppedBitmap = cropToAspectRatio(fullImageBitmap, aspectRatio)
 
-                    // Map the rectangle dimensions to the captured image's coordinate system
-                    val scaledX = (rectX * scaleX).toInt()
-                    val scaledY = (rectY * scaleY).toInt()
-                    val scaledWidth = (rectWidth * scaleX).toInt()
-                    val scaledHeight = (rectHeight * scaleY).toInt()
-
-                    // Ensure the rectangle stays within the image boundaries
-                    val validRect = Rect(
-                        scaledX.coerceAtLeast(0),
-                        scaledY.coerceAtLeast(0),
-                        (scaledX + scaledWidth).coerceAtMost(fullImageBitmap.width),
-                        (scaledY + scaledHeight).coerceAtMost(fullImageBitmap.height)
-                    )
-
-                    // Crop the bitmap based on the scaled rectangle
-                    val croppedBitmap = Bitmap.createBitmap(
-                        fullImageBitmap,
-                        validRect.left,
-                        validRect.top,
-                        validRect.width(),
-                        validRect.height()
-                    )
-
-                    // Save only the cropped bitmap
-                    saveCroppedImage(croppedBitmap)
+                    if (croppedBitmap != null) {
+                        // Save the cropped bitmap
+                        saveCroppedImage(croppedBitmap)
+                    }
 
                     // Delete the temporary full image file
                     photoFile.delete()
-
-                    // Display success
-                    Toast.makeText(this@CameraActivity, "Cropped Image Saved!", Toast.LENGTH_SHORT).show()
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    // Handle any errors that occur during image capture
-                    Toast.makeText(this@CameraActivity, "Error capturing image: ${exception.message}", Toast.LENGTH_SHORT).show()
+                    // Handle any errors during image capture
                 }
             }
+        )
+    }
+
+    private fun cropToAspectRatio(bitmap: Bitmap, aspectRatio: Float): Bitmap? {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        // Calculate the width and height of the rectangle (bounding box)
+        val rectWidth = width * 0.7f // Set width to 70% of image width
+        val rectHeight = rectWidth / aspectRatio // Calculate height based on aspect ratio
+
+        // Center the rectangle in the image
+        val rectLeft = (width - rectWidth) / 2
+        val rectTop = (height - rectHeight) / 2
+
+        // Ensure the rectangle dimensions are valid
+        if (rectLeft < 0 || rectTop < 0 || rectLeft + rectWidth > width || rectTop + rectHeight > height) {
+            return null // If invalid, return null
+        }
+
+        // Crop the Bitmap according to the calculated rectangle area
+        return Bitmap.createBitmap(
+            bitmap,
+            rectLeft.toInt(),
+            rectTop.toInt(),
+            rectWidth.toInt(),
+            rectHeight.toInt()
         )
     }
 
@@ -239,6 +238,6 @@ fun RectangleOverlay(
                     height
                 )
             }
-            .aspectRatio(1.59f) // ID card aspect ratio
+            .aspectRatio(1.59f) // Example aspect ratio
     )
 }
