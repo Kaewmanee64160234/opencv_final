@@ -12,6 +12,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Text
@@ -104,7 +105,9 @@ class CameraActivity : ComponentActivity() {
 
             // Rectangle Overlay
             RectangleOverlay(
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth(0.95f), // Occupy 95% of screen width
                 onOverlayPositioned = { x, y, width, height ->
                     rectX = x
                     rectY = y
@@ -223,8 +226,8 @@ fun RectangleOverlay(
 ) {
     Box(
         modifier = modifier
-            .border(2.dp, Color.Red, RoundedCornerShape(13.dp))
-            .padding(7.dp)
+            .aspectRatio(3.37f / 2.125f) // Credit card aspect ratio
+            .border(2.dp, Color.Gray, RoundedCornerShape(13.dp))
             .onGloballyPositioned { coordinates ->
                 val position = coordinates.positionInRoot()
                 val width = coordinates.size.width
@@ -238,6 +241,5 @@ fun RectangleOverlay(
                     height
                 )
             }
-            .aspectRatio(1.59f) // Example aspect ratio
     )
 }
