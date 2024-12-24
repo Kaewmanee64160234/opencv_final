@@ -2,18 +2,21 @@ package com.example.final_opencv
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.os.Bundle
-import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Button
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,19 +24,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.opencv.android.OpenCVLoader
-import org.opencv.core.*
-import org.opencv.imgproc.Imgproc
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class CameraActivity : ComponentActivity() {
+
+    private lateinit var cameraExecutor: ExecutorService
+    private var imageCapture: ImageCapture? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,193 +48,175 @@ class CameraActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
         }
 
-        // Initialize OpenCV
-        if (!OpenCVLoader.initDebug()) {
-            Log.e("OpenCV", "Initialization failed")
-        } else {
-            Log.d("OpenCV", "Initialization succeeded")
-        }
+        cameraExecutor = Executors.newSingleThreadExecutor()
 
         setContent {
-            Box(modifier = Modifier.fillMaxSize()) {
-                CameraWithAnalysisOverlay()
+            CameraPreviewWithRectangleOverlay()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+    }
+
+    @Composable
+    fun CameraPreviewWithRectangleOverlay() {
+        val context = this
+
+        val previewView = remember { PreviewView(context) }
+
+        // Rectangle's position and size
+        var rectX by remember { mutableStateOf(0) }
+        var rectY by remember { mutableStateOf(0) }
+        var rectWidth by remember { mutableStateOf(0) }
+        var rectHeight by remember { mutableStateOf(0) }
+
+        LaunchedEffect(Unit) {
+            val cameraProvider = ProcessCameraProvider.getInstance(context).get()
+
+            val preview = Preview.Builder()
+                .build()
+                .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+
+            imageCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build()
+
+            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    context,
+                    cameraSelector,
+                    preview,
+                    imageCapture
+                )
+            } catch (exc: Exception) {
+                Toast.makeText(context, "Failed to bind camera use cases", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Camera Preview
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { previewView }
+            )
+
+            // Rectangle Overlay
+            RectangleOverlay(
+                modifier = Modifier.align(Alignment.Center),
+                onOverlayPositioned = { x, y, width, height ->
+                    rectX = x
+                    rectY = y
+                    rectWidth = width
+                    rectHeight = height
+                }
+            )
+
+            // Capture Button
+            Button(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+                onClick = {
+                    imageCapture?.let {
+                        captureAndCropRectangleImage(it, rectX, rectY, rectWidth, rectHeight, previewView.width, previewView.height)
+                    }
+                }
+            ) {
+                Text("Capture Rectangle", style = TextStyle(fontSize = 16.sp))
             }
         }
     }
-}
 
-@Composable
-fun CameraWithAnalysisOverlay() {
-    val context = LocalContext.current
+    private fun captureAndCropRectangleImage(
+        imageCapture: ImageCapture,
+        rectX: Int,
+        rectY: Int,
+        rectWidth: Int,
+        rectHeight: Int,
+        previewWidth: Int,
+        previewHeight: Int
+    ) {
+        // Define the output file
+        val photoFile = File(
+            externalMediaDirs.firstOrNull(),
+            "TEMP_IMG_${System.currentTimeMillis()}.jpg"
+        )
 
-    // States for brightness and glare
-    var brightness by remember { mutableStateOf(0.0) }
-    var glare by remember { mutableStateOf(0.0) }
+        // Set up output options to save the image
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
-    // States for RectangleOverlay position and size
-    var overlayX by remember { mutableStateOf(0) }
-    var overlayY by remember { mutableStateOf(0) }
-    var overlayWidth by remember { mutableStateOf(0) }
-    var overlayHeight by remember { mutableStateOf(0) }
+        // Take the picture
+        imageCapture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    // Load the captured image
+                    val fullImageBitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
 
-    // A single-threaded executor for CameraX
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+                    // Calculate scale factors between preview and captured image
+                    val scaleX = fullImageBitmap.width.toFloat() / previewWidth
+                    val scaleY = fullImageBitmap.height.toFloat() / previewHeight
 
-    // Remember CameraProvider
-    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+                    // Map the rectangle dimensions to the captured image's coordinate system
+                    val scaledX = (rectX * scaleX).toInt()
+                    val scaledY = (rectY * scaleY).toInt()
+                    val scaledWidth = (rectWidth * scaleX).toInt()
+                    val scaledHeight = (rectHeight * scaleY).toInt()
 
-    // Create a PreviewView for the camera feed
-    val previewView = remember { PreviewView(context) }
+                    // Ensure the rectangle stays within the image boundaries
+                    val validRect = Rect(
+                        scaledX.coerceAtLeast(0),
+                        scaledY.coerceAtLeast(0),
+                        (scaledX + scaledWidth).coerceAtMost(fullImageBitmap.width),
+                        (scaledY + scaledHeight).coerceAtMost(fullImageBitmap.height)
+                    )
 
-    LaunchedEffect(Unit) {
-        val cameraProvider = cameraProviderFuture.get()
+                    // Crop the bitmap based on the scaled rectangle
+                    val croppedBitmap = Bitmap.createBitmap(
+                        fullImageBitmap,
+                        validRect.left,
+                        validRect.top,
+                        validRect.width(),
+                        validRect.height()
+                    )
 
-        // Build CameraX preview
-        val preview = androidx.camera.core.Preview.Builder()
-            .build()
-            .apply { setSurfaceProvider(previewView.surfaceProvider) }
+                    // Save only the cropped bitmap
+                    saveCroppedImage(croppedBitmap)
 
-        // Build Image Analysis use case
-        val imageAnalysis = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
+                    // Delete the temporary full image file
+                    photoFile.delete()
 
-        imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-            val mat = imageProxyToMat(imageProxy)
-            mat?.let {
-                try {
-                    // Map overlay dimensions to frame coordinates
-                    val frameWidth = it.width()
-                    val frameHeight = it.height()
+                    // Display success
+                    Toast.makeText(this@CameraActivity, "Cropped Image Saved!", Toast.LENGTH_SHORT).show()
+                }
 
-                    val roiX = (overlayX.toFloat() / previewView.width * frameWidth).toInt()
-                    val roiY = (overlayY.toFloat() / previewView.height * frameHeight).toInt()
-                    val roiWidth = (overlayWidth.toFloat() / previewView.width * frameWidth).toInt()
-                    val roiHeight = (overlayHeight.toFloat() / previewView.height * frameHeight).toInt()
-
-                    // Ensure ROI is within frame boundaries
-                    if (roiX + roiWidth <= frameWidth && roiY + roiHeight <= frameHeight) {
-                        val roi = Mat(it, Rect(roiX, roiY, roiWidth, roiHeight))
-
-                        // Perform brightness and glare calculations
-                        brightness = calculateBrightness(roi)
-                        glare = calculateGlarePercentage(roi)
-
-                        Log.d("FrameAnalysis", "Brightness: ${"%.2f".format(brightness)}%, Glare: ${"%.2f".format(glare)}%")
-
-                        roi.release()
-                    } else {
-                        Log.e("ROIError", "ROI dimensions exceed frame size: x=$roiX, y=$roiY, width=$roiWidth, height=$roiHeight")
-                    }
-                } catch (e: Exception) {
-                    Log.e("FrameAnalysis", "Error analyzing frame: ${e.message}")
-                } finally {
-                    it.release()
+                override fun onError(exception: ImageCaptureException) {
+                    // Handle any errors that occur during image capture
+                    Toast.makeText(this@CameraActivity, "Error capturing image: ${exception.message}", Toast.LENGTH_SHORT).show()
                 }
             }
-            imageProxy.close()
-        }
-
-        // Bind CameraX lifecycle
-        try {
-            val cameraSelector = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(context as ComponentActivity, cameraSelector, preview, imageAnalysis)
-        } catch (e: Exception) {
-            Log.e("CameraPreview", "Failed to bind camera: ${e.message}")
-        }
+        )
     }
 
-    // UI Composition
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Show Camera Preview
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { previewView }
+    private fun saveCroppedImage(croppedBitmap: Bitmap) {
+        val croppedFile = File(
+            externalMediaDirs.firstOrNull(),
+            "CROPPED_IMG_${System.currentTimeMillis()}.jpg"
         )
 
-        // Overlay showing brightness and glare
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Text("Brightness: ${"%.2f".format(brightness)}%", style = TextStyle(color = Color.White, fontSize = 16.sp))
-            Text("Glare: ${"%.2f".format(glare)}%", style = TextStyle(color = Color.White, fontSize = 16.sp))
-        }
-
-        // Rectangle overlay
-        RectangleOverlay(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth(0.95f) // Adjust the width as 50% of the screen width
-                .aspectRatio(1.59f), // Maintain ID card aspect ratio
-            onOverlayPositioned = { x, y, width, height ->
-                overlayX = x
-                overlayY = y
-                overlayWidth = width
-                overlayHeight = height
-            }
-        )
-
+        val outputStream = FileOutputStream(croppedFile)
+        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+        outputStream.flush()
+        outputStream.close()
     }
 }
 
-// Convert ImageProxy to OpenCV Mat
-private fun imageProxyToMat(image: ImageProxy): Mat? {
-    return try {
-        val buffer = image.planes[0].buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-
-        val mat = Mat(image.height, image.width, CvType.CV_8UC1)
-        mat.put(0, 0, bytes)
-
-        val rgbMat = Mat()
-        Imgproc.cvtColor(mat, rgbMat, Imgproc.COLOR_YUV2RGB_NV21)
-        mat.release()
-        rgbMat
-    } catch (e: Exception) {
-        Log.e("ImageConversion", "Error converting ImageProxy to Mat: ${e.message}")
-        null
-    }
-}
-
-// Calculate brightness percentage
-private fun calculateBrightness(mat: Mat): Double {
-    val gray = Mat()
-    Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-    val meanIntensity = Core.mean(gray).`val`[0]
-    gray.release()
-    return (meanIntensity / 255.0) * 100
-}
-
-// Calculate glare percentage
-fun calculateGlarePercentage(mat: Mat): Double {
-    // Ensure the input image is in grayscale
-    val gray = Mat()
-    Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-
-    // Threshold the grayscale image to identify bright regions (glare)
-    val thresholdValue = 240.0 // Adjust this value based on your application
-    val binary = Mat()
-    Imgproc.threshold(gray, binary, thresholdValue, 255.0, Imgproc.THRESH_BINARY)
-
-    // Count the number of pixels identified as glare
-    val glarePixels = Core.countNonZero(binary)
-
-    // Calculate the total number of pixels in the image
-    val totalPixels = mat.rows() * mat.cols()
-
-    // Compute glare percentage
-    val glarePercentage = (glarePixels.toDouble() / totalPixels.toDouble()) * 100
-
-    // Release resources
-    gray.release()
-    binary.release()
-
-    return glarePercentage
-}
 @Composable
 fun RectangleOverlay(
     modifier: Modifier = Modifier,
@@ -237,8 +224,8 @@ fun RectangleOverlay(
 ) {
     Box(
         modifier = modifier
-            .border(2.dp, Color.Gray, RoundedCornerShape(13.dp))
-            .padding(7.dp) // Padding inside the card
+            .border(2.dp, Color.Red, RoundedCornerShape(13.dp))
+            .padding(7.dp)
             .onGloballyPositioned { coordinates ->
                 val position = coordinates.positionInRoot()
                 val width = coordinates.size.width
@@ -252,45 +239,6 @@ fun RectangleOverlay(
                     height
                 )
             }
-            .aspectRatio(1.59f) // ID card aspect ratio: height/width = 1.59
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(
-                modifier = Modifier.fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Circle
-                Box(
-                    modifier = Modifier
-                        .size(45.dp)
-                        .border(2.dp, Color.Black, CircleShape)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Barcode
-                Box(
-                    modifier = Modifier
-                        .width(30.dp)
-                        .height(160.dp)
-                        .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
-                )
-            }
-        }
-        // Card Image
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 5.dp, bottom = 10.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(75.dp)
-                    .height(95.dp)
-                    .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
-            )
-        }
-
-    }
+            .aspectRatio(1.59f) // ID card aspect ratio
+    )
 }
