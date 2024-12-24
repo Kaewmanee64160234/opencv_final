@@ -111,7 +111,7 @@ fun RectangleOverlay(modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 5.dp, bottom = 17.dp)
+                .padding(end = 5.dp, bottom = 10.dp)
         ) {
             Box(
                 modifier = Modifier
