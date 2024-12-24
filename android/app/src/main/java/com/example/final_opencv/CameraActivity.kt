@@ -12,12 +12,15 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -63,6 +66,12 @@ fun CameraWithAnalysisOverlay() {
     var brightness by remember { mutableStateOf(0.0) }
     var glare by remember { mutableStateOf(0.0) }
 
+    // States for RectangleOverlay position and size
+    var overlayX by remember { mutableStateOf(0) }
+    var overlayY by remember { mutableStateOf(0) }
+    var overlayWidth by remember { mutableStateOf(0) }
+    var overlayHeight by remember { mutableStateOf(0) }
+
     // A single-threaded executor for CameraX
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -89,23 +98,20 @@ fun CameraWithAnalysisOverlay() {
             val mat = imageProxyToMat(imageProxy)
             mat?.let {
                 try {
-                    // Log frame dimensions
-                    Log.d("FrameDimensions", "Frame width: ${it.width()}, height: ${it.height()}")
+                    // Map overlay dimensions to frame coordinates
+                    val frameWidth = it.width()
+                    val frameHeight = it.height()
 
-                    // Dynamically calculate ROI dimensions based on frame size
-                    val roiX = (it.width() * 0.1).toInt()  // 10% from the left
-                    val roiY = (it.height() * 0.1).toInt() // 10% from the top
-                    val roiWidth = (it.width() * 0.8).toInt()  // 80% of the frame width
-                    val roiHeight = (it.height() * 0.8).toInt() // 80% of the frame height
-
-                    // Log ROI dimensions
-                    Log.d("ROIDimensions", "ROI x=$roiX, y=$roiY, width=$roiWidth, height=$roiHeight")
+                    val roiX = (overlayX.toFloat() / previewView.width * frameWidth).toInt()
+                    val roiY = (overlayY.toFloat() / previewView.height * frameHeight).toInt()
+                    val roiWidth = (overlayWidth.toFloat() / previewView.width * frameWidth).toInt()
+                    val roiHeight = (overlayHeight.toFloat() / previewView.height * frameHeight).toInt()
 
                     // Ensure ROI is within frame boundaries
-                    if (roiX + roiWidth <= it.width() && roiY + roiHeight <= it.height()) {
+                    if (roiX + roiWidth <= frameWidth && roiY + roiHeight <= frameHeight) {
                         val roi = Mat(it, Rect(roiX, roiY, roiWidth, roiHeight))
 
-                        // Calculate brightness and glare
+                        // Perform brightness and glare calculations
                         brightness = calculateBrightness(roi)
                         glare = calculateGlarePercentage(roi)
 
@@ -113,7 +119,7 @@ fun CameraWithAnalysisOverlay() {
 
                         roi.release()
                     } else {
-                        Log.e("ROIError", "ROI dimensions exceed frame size: roiX=$roiX, roiY=$roiY, roiWidth=$roiWidth, roiHeight=$roiHeight")
+                        Log.e("ROIError", "ROI dimensions exceed frame size: x=$roiX, y=$roiY, width=$roiWidth, height=$roiHeight")
                     }
                 } catch (e: Exception) {
                     Log.e("FrameAnalysis", "Error analyzing frame: ${e.message}")
@@ -152,13 +158,20 @@ fun CameraWithAnalysisOverlay() {
             Text("Glare: ${"%.2f".format(glare)}%", style = TextStyle(color = Color.White, fontSize = 16.sp))
         }
 
-        // Rectangle overlay to indicate ROI
-        Box(
+        // Rectangle overlay
+        RectangleOverlay(
             modifier = Modifier
                 .align(Alignment.Center)
-                .border(2.dp, Color.Gray, RoundedCornerShape(8.dp))
-                .size(300.dp, 400.dp)
+                .fillMaxWidth(0.95f) // Adjust the width as 50% of the screen width
+                .aspectRatio(1.59f), // Maintain ID card aspect ratio
+            onOverlayPositioned = { x, y, width, height ->
+                overlayX = x
+                overlayY = y
+                overlayWidth = width
+                overlayHeight = height
+            }
         )
+
     }
 }
 
@@ -192,19 +205,92 @@ private fun calculateBrightness(mat: Mat): Double {
 }
 
 // Calculate glare percentage
-private fun calculateGlarePercentage(mat: Mat): Double {
+fun calculateGlarePercentage(mat: Mat): Double {
+    // Ensure the input image is in grayscale
     val gray = Mat()
     Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
 
-    // Threshold the image to isolate bright regions
+    // Threshold the grayscale image to identify bright regions (glare)
+    val thresholdValue = 240.0 // Adjust this value based on your application
     val binary = Mat()
-    Imgproc.threshold(gray, binary, 240.0, 255.0, Imgproc.THRESH_BINARY)
+    Imgproc.threshold(gray, binary, thresholdValue, 255.0, Imgproc.THRESH_BINARY)
 
+    // Count the number of pixels identified as glare
     val glarePixels = Core.countNonZero(binary)
+
+    // Calculate the total number of pixels in the image
     val totalPixels = mat.rows() * mat.cols()
 
+    // Compute glare percentage
+    val glarePercentage = (glarePixels.toDouble() / totalPixels.toDouble()) * 100
+
+    // Release resources
     gray.release()
     binary.release()
 
-    return (glarePixels.toDouble() / totalPixels.toDouble()) * 100
+    return glarePercentage
+}
+@Composable
+fun RectangleOverlay(
+    modifier: Modifier = Modifier,
+    onOverlayPositioned: (Int, Int, Int, Int) -> Unit // Callback for dimensions
+) {
+    Box(
+        modifier = modifier
+            .border(2.dp, Color.Gray, RoundedCornerShape(13.dp))
+            .padding(7.dp) // Padding inside the card
+            .onGloballyPositioned { coordinates ->
+                val position = coordinates.positionInRoot()
+                val width = coordinates.size.width
+                val height = coordinates.size.height
+
+                // Pass position and size of the overlay to the parent composable
+                onOverlayPositioned(
+                    position.x.toInt(),
+                    position.y.toInt(),
+                    width,
+                    height
+                )
+            }
+            .aspectRatio(1.59f) // ID card aspect ratio: height/width = 1.59
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier.fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Circle
+                Box(
+                    modifier = Modifier
+                        .size(45.dp)
+                        .border(2.dp, Color.Black, CircleShape)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // Barcode
+                Box(
+                    modifier = Modifier
+                        .width(30.dp)
+                        .height(160.dp)
+                        .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
+                )
+            }
+        }
+        // Card Image
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 5.dp, bottom = 10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(75.dp)
+                    .height(95.dp)
+                    .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
+            )
+        }
+
+    }
 }
