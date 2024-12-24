@@ -16,11 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 
 class CameraActivity : ComponentActivity() {
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -36,7 +36,6 @@ fun CameraWithRectangleOverlay() {
     Box(modifier = Modifier.fillMaxSize()) {
         CameraPreview()
 
-        // Centered Row for the overlay
         Row(
             modifier = Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.Center,
@@ -79,50 +78,46 @@ fun CameraPreview() {
 
 @Composable
 fun RectangleOverlay(modifier: Modifier = Modifier) {
-    // Responsive outer card container
     Box(
         modifier = modifier
-            .border(2.dp, Color.Gray, RoundedCornerShape(13.dp)) // Border with rounded corners
+            .border(2.dp, Color.Gray, RoundedCornerShape(13.dp))
             .padding(7.dp) // Padding inside the card
     ) {
-        // Use Row for left and right elements
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.SpaceBetween // Distribute content horizontally
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(
                 modifier = Modifier.fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween // Distribute content vertically
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Circle at the top-left
+//                circle
                 Box(
                     modifier = Modifier
-                        .size(45.dp) // Circle size
-                        .border(2.dp, Color.Black, CircleShape) // Circle border
+                        .size(45.dp)
+                        .border(2.dp, Color.Black, CircleShape)
                 )
-                Spacer(modifier = Modifier.height(8.dp)) // Add some space between elements
-
-                // Long rectangle on the left
+                Spacer(modifier = Modifier.height(8.dp))
+// barcode
                 Box(
                     modifier = Modifier
-                        .width(30.dp) // Rectangle width
-                        .height(160.dp) // Fixed height
-                        .border(2.dp, Color.Black, RoundedCornerShape(5.dp)) // Rectangle border
+                        .width(30.dp)
+                        .height(160.dp)
+                        .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
                 )
             }
         }
-
-        // Bottom-right rectangle with margins
+//card image
         Box(
             modifier = Modifier
-                .align(Alignment.BottomEnd) // Align to bottom-right
-                .padding(end = 5.dp, bottom = 17.dp) // Add margins
+                .align(Alignment.BottomEnd)
+                .padding(end = 5.dp, bottom = 17.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .width(75.dp) // Rectangle width
-                    .height(95.dp) // Fixed height
-                    .border(2.dp, Color.Black, RoundedCornerShape(5.dp)) // Rectangle border
+                    .width(75.dp)
+                    .height(95.dp)
+                    .border(2.dp, Color.Black, RoundedCornerShape(5.dp))
             )
         }
     }
