@@ -37,16 +37,17 @@ class CameraActivity : ComponentActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
 
-
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-// Load OpenCV native libraries
+
+        // Load OpenCV native libraries
         if (!org.opencv.android.OpenCVLoader.initDebug()) {
             Log.e("OpenCV", "OpenCV initialization failed")
         } else {
             Log.d("OpenCV", "OpenCV initialization successful")
         }
+
         // Request Camera Permissions
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), 101)
@@ -55,7 +56,7 @@ class CameraActivity : ComponentActivity() {
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         setContent {
-            CameraPreviewWithAnalysis()
+            CameraPreviewWithRealTimeAnalysis()
         }
     }
 
@@ -65,7 +66,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CameraPreviewWithAnalysis() {
+    fun CameraPreviewWithRealTimeAnalysis() {
         val context = this
         val previewView = remember { PreviewView(context) }
 
@@ -75,10 +76,10 @@ class CameraActivity : ComponentActivity() {
         var rectWidth by remember { mutableStateOf(300) } // Default width
         var rectHeight by remember { mutableStateOf(200) } // Default height
 
-
         // Real-time feedback values
         var brightness by remember { mutableStateOf(0.0) }
         var glare by remember { mutableStateOf(0.0) }
+        var statusMessage by remember { mutableStateOf("Analyzing...") }
 
         LaunchedEffect(Unit) {
             val cameraProvider = ProcessCameraProvider.getInstance(context).get()
@@ -94,24 +95,29 @@ class CameraActivity : ComponentActivity() {
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                if (rectWidth > 0 && rectHeight > 0) { // Ensure the rectangle dimensions are valid
-                    val croppedBitmap = cropImageProxyToRect(
-                        imageProxy,
-                        rectX, rectY, rectWidth, rectHeight,
-                        previewView.width, previewView.height
-                    )
-                    if (croppedBitmap != null) {
-                        val mat = bitmapToMat(croppedBitmap)
-                        if (mat != null && !mat.empty()) {
-                            brightness = calculateBrightness(mat)
-                            glare = calculateGlarePercentage(mat)
-                            mat.release()
+                val croppedBitmap = cropImageProxyToRect(
+                    imageProxy,
+                    rectX,
+                    rectY,
+                    rectWidth,
+                    rectHeight,
+                    previewView.width,
+                    previewView.height
+                )
+                if (croppedBitmap != null) {
+                    val mat = bitmapToMat(croppedBitmap)
+                    if (mat != null && !mat.empty()) {
+                        brightness = calculateBrightness(mat)
+                        glare = calculateGlarePercentage(mat)
+                        mat.release()
+
+                        statusMessage = when {
+                            brightness < 30 -> "Brightness too low. Increase lighting."
+                            brightness > 120 -> "Brightness too high. Reduce lighting."
+                            glare > 5 -> "Excessive glare detected. Adjust lighting or angle."
+                            else -> "Lighting conditions are optimal."
                         }
-                    } else {
-                        Log.e("CropError", "Failed to crop image.")
                     }
-                } else {
-                    Log.e("CropError", "Invalid rectangle dimensions: x=$rectX, y=$rectY, width=$rectWidth, height=$rectHeight")
                 }
                 imageProxy.close()
             }
@@ -156,6 +162,7 @@ class CameraActivity : ComponentActivity() {
             ) {
                 Text("Brightness: ${brightness.toInt()}%", style = TextStyle(fontSize = 18.sp, color = Color.White))
                 Text("Glare: ${glare.toInt()}%", style = TextStyle(fontSize = 18.sp, color = Color.White))
+                Text(statusMessage, style = TextStyle(fontSize = 18.sp, color = Color.White))
             }
         }
     }
@@ -180,15 +187,13 @@ class CameraActivity : ComponentActivity() {
         val cropWidth = (rectWidth * scaleX).toInt()
         val cropHeight = (rectHeight * scaleY).toInt()
 
-        // Validate the calculated crop dimensions
-        if (cropWidth <= 0 || cropHeight <= 0 ||
-            cropX < 0 || cropY < 0 ||
-            cropX + cropWidth > bitmap.width || cropY + cropHeight > bitmap.height) {
+        if (cropWidth <= 0 || cropHeight <= 0 || cropX < 0 || cropY < 0 ||
+            cropX + cropWidth > bitmap.width || cropY + cropHeight > bitmap.height
+        ) {
             Log.e("CropError", "Invalid crop dimensions: x=$cropX, y=$cropY, width=$cropWidth, height=$cropHeight")
             return null
         }
 
-        // Crop the bitmap
         return Bitmap.createBitmap(bitmap, cropX, cropY, cropWidth, cropHeight)
     }
 
@@ -256,7 +261,7 @@ class CameraActivity : ComponentActivity() {
             Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
 
             val binary = Mat()
-            Imgproc.threshold(gray, binary, 200.0, 255.0, Imgproc.THRESH_BINARY)
+            Imgproc.threshold(gray, binary, 230.0, 255.0, Imgproc.THRESH_BINARY)
 
             val glarePixels = Core.countNonZero(binary)
             val totalPixels = mat.rows() * mat.cols()
@@ -275,6 +280,7 @@ class CameraActivity : ComponentActivity() {
         }
     }
 }
+
 @Composable
 fun RectangleOverlay(
     modifier: Modifier = Modifier,
