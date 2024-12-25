@@ -112,8 +112,8 @@ class CameraActivity : ComponentActivity() {
                         mat.release()
 
                         statusMessage = when {
-                            brightness < 30 -> "Brightness too low. Increase lighting."
-                            brightness > 120 -> "Brightness too high. Reduce lighting."
+                            brightness < 81 -> "Brightness too low. Increase lighting."
+                            brightness > 155 -> "Brightness too high. Reduce lighting."
                             glare > 5 -> "Excessive glare detected. Adjust lighting or angle."
                             else -> "Lighting conditions are optimal."
                         }
