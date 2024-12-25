@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.annotation.RequiresApi
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -25,7 +27,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
@@ -36,25 +37,25 @@ class CameraActivity : ComponentActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
 
+
+    @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Request Camera Permissions
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
-        }
-
-        // Initialize OpenCV
+// Load OpenCV native libraries
         if (!org.opencv.android.OpenCVLoader.initDebug()) {
-            Log.e("OpenCV", "Initialization failed")
+            Log.e("OpenCV", "OpenCV initialization failed")
         } else {
-            Log.d("OpenCV", "Initialization successful")
+            Log.d("OpenCV", "OpenCV initialization successful")
+        }
+        // Request Camera Permissions
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), 101)
         }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         setContent {
-            CameraPreviewWithRectangleOverlay()
+            CameraPreviewWithAnalysis()
         }
     }
 
@@ -64,18 +65,18 @@ class CameraActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CameraPreviewWithRectangleOverlay() {
+    fun CameraPreviewWithAnalysis() {
         val context = this
-
         val previewView = remember { PreviewView(context) }
 
-        // Rectangle's position and size
+        // Rectangle overlay properties
         var rectX by remember { mutableStateOf(0) }
         var rectY by remember { mutableStateOf(0) }
-        var rectWidth by remember { mutableStateOf(0) }
-        var rectHeight by remember { mutableStateOf(0) }
+        var rectWidth by remember { mutableStateOf(300) } // Default width
+        var rectHeight by remember { mutableStateOf(200) } // Default height
 
-        // Real-time brightness and glare values
+
+        // Real-time feedback values
         var brightness by remember { mutableStateOf(0.0) }
         var glare by remember { mutableStateOf(0.0) }
 
@@ -89,46 +90,31 @@ class CameraActivity : ComponentActivity() {
             val imageAnalysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
-                .also { analysis ->
-                    analysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                        Log.d("Debug", "Starting image analysis...")
-                        val bitmap = imageProxyToBitmap(imageProxy)
-                        if (bitmap == null) {
-                            Log.e("Error", "Bitmap conversion failed")
-                            imageProxy.close()
-                            return@setAnalyzer
-                        }
-
-                        val croppedBitmap = cropBitmapToRect(bitmap, rectX, rectY, rectWidth, rectHeight)
-                        if (croppedBitmap == null) {
-                            Log.e("Error", "Cropping failed. Check rect bounds.")
-                            imageProxy.close()
-                            return@setAnalyzer
-                        }
-
-                        val mat = bitmapToMat(croppedBitmap)
-                        if (mat == null || mat.empty()) {
-                            Log.e("Error", "Failed to convert Bitmap to Mat.")
-                            imageProxy.close()
-                            return@setAnalyzer
-                        }
-
-                        val brightnessValue = calculateBrightness(mat)
-                        Log.d("Debug", "Brightness: $brightnessValue")
-
-                        val glareValue = calculateGlarePercentage(mat)
-                        Log.d("Debug", "Glare: $glareValue")
-
-                        // Update UI values
-                        brightness = brightnessValue
-                        glare = glareValue
-
-                        mat.release()
-                        imageProxy.close()
-                    }
-                }
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                if (rectWidth > 0 && rectHeight > 0) { // Ensure the rectangle dimensions are valid
+                    val croppedBitmap = cropImageProxyToRect(
+                        imageProxy,
+                        rectX, rectY, rectWidth, rectHeight,
+                        previewView.width, previewView.height
+                    )
+                    if (croppedBitmap != null) {
+                        val mat = bitmapToMat(croppedBitmap)
+                        if (mat != null && !mat.empty()) {
+                            brightness = calculateBrightness(mat)
+                            glare = calculateGlarePercentage(mat)
+                            mat.release()
+                        }
+                    } else {
+                        Log.e("CropError", "Failed to crop image.")
+                    }
+                } else {
+                    Log.e("CropError", "Invalid rectangle dimensions: x=$rectX, y=$rectY, width=$rectWidth, height=$rectHeight")
+                }
+                imageProxy.close()
+            }
 
             try {
                 cameraProvider.unbindAll()
@@ -152,9 +138,7 @@ class CameraActivity : ComponentActivity() {
 
             // Rectangle Overlay
             RectangleOverlay(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth(0.95f), // Occupy 95% of screen width
+                modifier = Modifier.align(Alignment.Center),
                 onOverlayPositioned = { x, y, width, height ->
                     rectX = x
                     rectY = y
@@ -163,7 +147,7 @@ class CameraActivity : ComponentActivity() {
                 }
             )
 
-            // Display brightness and glare percentages
+            // Display feedback
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -176,9 +160,42 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
+    private fun cropImageProxyToRect(
+        imageProxy: ImageProxy,
+        rectX: Int,
+        rectY: Int,
+        rectWidth: Int,
+        rectHeight: Int,
+        previewWidth: Int,
+        previewHeight: Int
+    ): Bitmap? {
+        val bitmap = imageProxyToBitmap(imageProxy) ?: return null
+
+        // Map the rectangle dimensions to the bitmap size
+        val scaleX = bitmap.width.toFloat() / previewWidth
+        val scaleY = bitmap.height.toFloat() / previewHeight
+
+        val cropX = (rectX * scaleX).toInt()
+        val cropY = (rectY * scaleY).toInt()
+        val cropWidth = (rectWidth * scaleX).toInt()
+        val cropHeight = (rectHeight * scaleY).toInt()
+
+        // Validate the calculated crop dimensions
+        if (cropWidth <= 0 || cropHeight <= 0 ||
+            cropX < 0 || cropY < 0 ||
+            cropX + cropWidth > bitmap.width || cropY + cropHeight > bitmap.height) {
+            Log.e("CropError", "Invalid crop dimensions: x=$cropX, y=$cropY, width=$cropWidth, height=$cropHeight")
+            return null
+        }
+
+        // Crop the bitmap
+        return Bitmap.createBitmap(bitmap, cropX, cropY, cropWidth, cropHeight)
+    }
+
     private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
         return try {
-            val buffer = imageProxy.planes[0].buffer
+            val plane = imageProxy.planes[0]
+            val buffer = plane.buffer
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
 
@@ -189,6 +206,11 @@ class CameraActivity : ComponentActivity() {
                 imageProxy.height,
                 null
             )
+
+            if (imageProxy.width <= 0 || imageProxy.height <= 0) {
+                Log.e("ImageProxyError", "Invalid image dimensions: width=${imageProxy.width}, height=${imageProxy.height}")
+                return null
+            }
 
             val outputStream = java.io.ByteArrayOutputStream()
             yuvImage.compressToJpeg(
@@ -202,22 +224,6 @@ class CameraActivity : ComponentActivity() {
             e.printStackTrace()
             null
         }
-    }
-
-    private fun cropBitmapToRect(bitmap: Bitmap, x: Int, y: Int, width: Int, height: Int): Bitmap? {
-        // Ensure the rectangle is within the bounds of the image
-        val validX = x.coerceIn(0, bitmap.width - 1)
-        val validY = y.coerceIn(0, bitmap.height - 1)
-        val validWidth = width.coerceAtMost(bitmap.width - validX)
-        val validHeight = height.coerceAtMost(bitmap.height - validY)
-
-        // Check if the dimensions are valid for cropping
-        if (validWidth <= 0 || validHeight <= 0) {
-            Log.e("Error", "Invalid cropping dimensions: x=$validX, y=$validY, width=$validWidth, height=$validHeight")
-            return null
-        }
-
-        return Bitmap.createBitmap(bitmap, validX, validY, validWidth, validHeight)
     }
 
     private fun bitmapToMat(bitmap: Bitmap): Mat? {
@@ -237,10 +243,10 @@ class CameraActivity : ComponentActivity() {
             Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
             val meanIntensity = Core.mean(gray).`val`[0]
             gray.release()
-            (meanIntensity / 255.0) * 100
+            meanIntensity
         } catch (e: Exception) {
             e.printStackTrace()
-            0.0
+            -1.0
         }
     }
 
@@ -250,7 +256,7 @@ class CameraActivity : ComponentActivity() {
             Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
 
             val binary = Mat()
-            Imgproc.threshold(gray, binary, 240.0, 255.0, Imgproc.THRESH_BINARY)
+            Imgproc.threshold(gray, binary, 200.0, 255.0, Imgproc.THRESH_BINARY)
 
             val glarePixels = Core.countNonZero(binary)
             val totalPixels = mat.rows() * mat.cols()
@@ -258,14 +264,17 @@ class CameraActivity : ComponentActivity() {
             gray.release()
             binary.release()
 
-            (glarePixels.toDouble() / totalPixels.toDouble()) * 100
+            if (totalPixels > 0) {
+                (glarePixels.toDouble() / totalPixels.toDouble()) * 100.0
+            } else {
+                0.0
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             0.0
         }
     }
 }
-
 @Composable
 fun RectangleOverlay(
     modifier: Modifier = Modifier,
@@ -273,20 +282,25 @@ fun RectangleOverlay(
 ) {
     Box(
         modifier = modifier
-            .aspectRatio(3.37f / 2.125f) // Credit card aspect ratio
+            .size(300.dp, 200.dp) // Fixed size for rectangle
             .border(2.dp, Color.Red, RoundedCornerShape(13.dp))
             .onGloballyPositioned { coordinates ->
                 val position = coordinates.positionInRoot()
                 val width = coordinates.size.width
                 val height = coordinates.size.height
 
-                // Pass position and size of the overlay to the parent composable
-                onOverlayPositioned(
-                    position.x.toInt(),
-                    position.y.toInt(),
-                    width,
-                    height
-                )
+                Log.d("RectangleOverlay", "Rectangle dimensions: x=${position.x}, y=${position.y}, width=$width, height=$height")
+
+                if (width > 0 && height > 0) {
+                    onOverlayPositioned(
+                        position.x.toInt(),
+                        position.y.toInt(),
+                        width,
+                        height
+                    )
+                } else {
+                    Log.e("OverlayError", "Invalid rectangle dimensions: width=$width, height=$height")
+                }
             }
     )
 }
