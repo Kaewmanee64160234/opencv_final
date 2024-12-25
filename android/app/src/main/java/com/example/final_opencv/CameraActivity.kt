@@ -73,13 +73,16 @@ class CameraActivity : ComponentActivity() {
         // Rectangle overlay properties
         var rectX by remember { mutableStateOf(0) }
         var rectY by remember { mutableStateOf(0) }
-        var rectWidth by remember { mutableStateOf(300) } // Default width
-        var rectHeight by remember { mutableStateOf(200) } // Default height
+        var rectWidth by remember { mutableStateOf(300) }
+        var rectHeight by remember { mutableStateOf(200) }
 
-        // Real-time feedback values
-        var brightness by remember { mutableStateOf(0.0) }
-        var glare by remember { mutableStateOf(0.0) }
+        // Analysis values
+        var brightnessList = remember { mutableStateListOf<Double>() }
+        var glareList = remember { mutableStateListOf<Double>() }
         var statusMessage by remember { mutableStateOf("Analyzing...") }
+
+        // Mutable state to store the last update timestamp
+        var lastUpdateTime by remember { mutableStateOf(System.currentTimeMillis()) }
 
         LaunchedEffect(Unit) {
             val cameraProvider = ProcessCameraProvider.getInstance(context).get()
@@ -107,17 +110,29 @@ class CameraActivity : ComponentActivity() {
                 if (croppedBitmap != null) {
                     val mat = bitmapToMat(croppedBitmap)
                     if (mat != null && !mat.empty()) {
-                        brightness = calculateBrightness(mat)
-                        glare = calculateGlarePercentage(mat)
-                        val shapeAnalysis = analyzeBrightRegions(mat)
+                        val brightness = calculateBrightness(mat)
+                        val brightRegionStatus = analyzeBrightRegions(mat)
 
-                        statusMessage = when {
-                            brightness < 81 -> "Brightness too low. Increase lighting."
-                            brightness > 155 -> "Brightness too high. Reduce lighting."
-                            glare > 5 -> "Excessive glare detected. Adjust lighting or angle."
-                            shapeAnalysis == "Watermark Detected" -> "Watermark detected."
-                            shapeAnalysis == "Reflection Detected" -> "Reflection detected."
-                            else -> "Lighting conditions are optimal."
+                        brightnessList.add(brightness)
+
+                        if (System.currentTimeMillis() - lastUpdateTime >= 1000) {
+                            // Calculate averages
+                            val avgBrightness = brightnessList.average()
+
+                            // Update status message
+                            statusMessage = when {
+                                avgBrightness < 81 -> "Brightness too low. Increase lighting."
+                                avgBrightness > 155 -> "Brightness too high. Reduce lighting."
+                                brightRegionStatus == "Watermark Detected" -> "Watermark detected."
+                                brightRegionStatus == "Reflection Detected" -> "Reflection detected."
+                                else -> "Lighting conditions are optimal."
+                            }
+
+                            // Clear lists for next interval
+                            brightnessList.clear()
+
+                            // Update the last update time
+                            lastUpdateTime = System.currentTimeMillis()
                         }
 
                         mat.release()
@@ -125,6 +140,7 @@ class CameraActivity : ComponentActivity() {
                 }
                 imageProxy.close()
             }
+
 
             try {
                 cameraProvider.unbindAll()
@@ -140,13 +156,11 @@ class CameraActivity : ComponentActivity() {
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            // Camera Preview
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { previewView }
             )
 
-            // Rectangle Overlay
             RectangleOverlay(
                 modifier = Modifier.align(Alignment.Center),
                 onOverlayPositioned = { x, y, width, height ->
@@ -157,19 +171,17 @@ class CameraActivity : ComponentActivity() {
                 }
             )
 
-            // Display feedback
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Brightness: ${brightness.toInt()}%", style = TextStyle(fontSize = 18.sp, color = Color.White))
-                Text("Glare: ${glare.toInt()}%", style = TextStyle(fontSize = 18.sp, color = Color.White))
                 Text(statusMessage, style = TextStyle(fontSize = 18.sp, color = Color.White))
             }
         }
     }
+
 
     private fun analyzeBrightRegions(mat: Mat): String {
         val gray = Mat()
@@ -292,30 +304,30 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
-    private fun calculateGlarePercentage(mat: Mat): Double {
-        return try {
-            val gray = Mat()
-            Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-
-            val binary = Mat()
-            Imgproc.threshold(gray, binary, 230.0, 255.0, Imgproc.THRESH_BINARY)
-
-            val glarePixels = Core.countNonZero(binary)
-            val totalPixels = mat.rows() * mat.cols()
-
-            gray.release()
-            binary.release()
-
-            if (totalPixels > 0) {
-                (glarePixels.toDouble() / totalPixels.toDouble()) * 100.0
-            } else {
-                0.0
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            0.0
-        }
-    }
+//    private fun calculateGlarePercentage(mat: Mat): Double {
+//        return try {
+//            val gray = Mat()
+//            Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
+//
+//            val binary = Mat()
+//            Imgproc.threshold(gray, binary, 230.0, 255.0, Imgproc.THRESH_BINARY)
+//
+//            val glarePixels = Core.countNonZero(binary)
+//            val totalPixels = mat.rows() * mat.cols()
+//
+//            gray.release()
+//            binary.release()
+//
+//            if (totalPixels > 0) {
+//                (glarePixels.toDouble() / totalPixels.toDouble()) * 100.0
+//            } else {
+//                0.0
+//            }
+//        } catch (e: Exception) {
+//            e.printStackTrace()
+//            0.0
+//        }
+//    }
 }
 
 @Composable
