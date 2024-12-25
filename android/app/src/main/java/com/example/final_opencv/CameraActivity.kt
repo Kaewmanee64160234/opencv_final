@@ -109,14 +109,18 @@ class CameraActivity : ComponentActivity() {
                     if (mat != null && !mat.empty()) {
                         brightness = calculateBrightness(mat)
                         glare = calculateGlarePercentage(mat)
-                        mat.release()
+                        val shapeAnalysis = analyzeBrightRegions(mat)
 
                         statusMessage = when {
                             brightness < 81 -> "Brightness too low. Increase lighting."
                             brightness > 155 -> "Brightness too high. Reduce lighting."
                             glare > 5 -> "Excessive glare detected. Adjust lighting or angle."
+                            shapeAnalysis == "Watermark Detected" -> "Watermark detected."
+                            shapeAnalysis == "Reflection Detected" -> "Reflection detected."
                             else -> "Lighting conditions are optimal."
                         }
+
+                        mat.release()
                     }
                 }
                 imageProxy.close()
@@ -167,6 +171,39 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
+    private fun analyzeBrightRegions(mat: Mat): String {
+        val gray = Mat()
+        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
+
+        val binary = Mat()
+        Imgproc.threshold(gray, binary, 230.0, 255.0, Imgproc.THRESH_BINARY)
+
+        val contours = ArrayList<MatOfPoint>()
+        val hierarchy = Mat()
+        Imgproc.findContours(binary, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+
+        for (contour in contours) {
+            val area = Imgproc.contourArea(contour)
+            if (area > 100) { // Ignore small noise
+                val perimeter = Imgproc.arcLength(MatOfPoint2f(*contour.toArray()), true)
+                val circularity = 4 * Math.PI * (area / (perimeter * perimeter))
+
+                if (circularity > 0.7) {
+                    gray.release()
+                    binary.release()
+                    return "Watermark Detected"
+                } else {
+                    gray.release()
+                    binary.release()
+                    return "Reflection Detected"
+                }
+            }
+        }
+
+        gray.release()
+        binary.release()
+        return "No significant regions detected"
+    }
     private fun cropImageProxyToRect(
         imageProxy: ImageProxy,
         rectX: Int,
