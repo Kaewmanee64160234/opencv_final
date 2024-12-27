@@ -132,14 +132,13 @@ class CameraActivity : ComponentActivity() {
 
     private fun captureBurstImages(imageCapture: ImageCapture, totalCaptures: Int = 5) {
         var currentCapture = 0
+        val photoFiles = List(totalCaptures) { index ->
+            File(externalMediaDirs.firstOrNull(), "CROPPED_IMG_${System.currentTimeMillis()}_$index.jpg")
+        }
 
-        // Coroutine scope to handle burst capture
         GlobalScope.launch(Dispatchers.Main) {
             while (currentCapture < totalCaptures) {
-                val photoFile = File(
-                    externalMediaDirs.firstOrNull(),
-                    "CROPPED_IMG_${System.currentTimeMillis()}_$currentCapture.jpg"
-                )
+                val photoFile = photoFiles[currentCapture]
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
                 imageCapture.takePicture(
@@ -147,15 +146,17 @@ class CameraActivity : ComponentActivity() {
                     ContextCompat.getMainExecutor(this@CameraActivity),
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                            val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
-                            if (bitmap != null) {
-                                val croppedBitmap = cropToCreditCardAspect(bitmap)
-                                if (croppedBitmap != null) {
-                                    saveBitmap(croppedBitmap, photoFile)
-                                    Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
+                            GlobalScope.launch(Dispatchers.IO) {
+                                val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
+                                if (bitmap != null) {
+                                    val croppedBitmap = cropToCreditCardAspect(bitmap)
+                                    if (croppedBitmap != null) {
+                                        saveBitmap(croppedBitmap, photoFile)
+                                        Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
+                                    }
+                                } else {
+                                    Log.e("Burst", "Failed to decode bitmap for image ${currentCapture + 1}")
                                 }
-                            } else {
-                                Log.e("Burst", "Failed to decode bitmap for image ${currentCapture + 1}")
                             }
                         }
 
@@ -166,7 +167,6 @@ class CameraActivity : ComponentActivity() {
                 )
 
                 currentCapture++
-                delay(500) // Add delay to ensure proper capture between images
             }
             Log.d("Burst", "Captured and cropped $totalCaptures images.")
         }
