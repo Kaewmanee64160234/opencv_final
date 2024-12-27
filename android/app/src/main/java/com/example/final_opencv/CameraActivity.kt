@@ -147,3 +147,4 @@ class CameraActivity : ComponentActivity() {
         captureNextImage()
     }
 }
+
