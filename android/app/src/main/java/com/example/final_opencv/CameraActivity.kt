@@ -85,6 +85,8 @@ class CameraActivity : ComponentActivity() {
         var statusMessage by remember { mutableStateOf("Analyzing...") }
         val brightnessList = remember { mutableStateListOf<Double>() }
         val glareList = remember { mutableStateListOf<Double>() }
+        var optimalLightingDetected by remember { mutableStateOf(false) } // Track optimal lighting detection
+        var showSuccessMessage by remember { mutableStateOf(false) } // Track capture success
 
         // Coroutine to periodically calculate averages
         LaunchedEffect(Unit) {
@@ -101,12 +103,22 @@ class CameraActivity : ComponentActivity() {
                     else -> "Lighting conditions are optimal."
                 }
 
-                // Update displayed brightness
-                brightnessText = "Avg Brightness: ${"%.2f".format(avgBrightness)}, Avg Glare: ${"%.2f".format(avgGlare)}"
+                // Check if lighting conditions are optimal
+                optimalLightingDetected = statusMessage == "Lighting conditions are optimal."
 
                 // Clear lists for next interval
                 brightnessList.clear()
                 glareList.clear()
+            }
+        }
+
+        LaunchedEffect(optimalLightingDetected) {
+            if (optimalLightingDetected) {
+                delay(2000) // Wait for 2 seconds to ensure stable conditions
+                if (optimalLightingDetected) { // Confirm conditions are still optimal
+                    captureBurstImages(imageCapture, 5) // Capture a single image
+                    showSuccessMessage = true // Show success message
+                }
             }
         }
 
@@ -194,18 +206,18 @@ class CameraActivity : ComponentActivity() {
                 )
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Button(
-                    onClick = {
-                        captureBurstImages(imageCapture, 5)
-                    }
+            if (showSuccessMessage) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Capture 5 Images")
+                    Text(
+                        text = "Capture Successful!",
+                        color = Color.Green,
+                        fontSize = 20.sp
+                    )
                 }
             }
         }
