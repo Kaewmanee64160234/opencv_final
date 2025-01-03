@@ -37,6 +37,7 @@ import coil.compose.rememberImagePainter
 import kotlinx.coroutines.*
 import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.MatOfDouble
 import org.opencv.core.MatOfPoint
 import org.opencv.imgproc.Imgproc
 import java.io.File
@@ -88,7 +89,36 @@ class CameraActivity : ComponentActivity() {
         // Do not manually unbind CameraX
     }
 
+    private fun findSharpestImage(imagePaths: List<String>): Pair<String?, Double> {
+        var sharpestPath: String? = null
+        var maxVariance = 0.0
 
+        // Iterate through each image path
+        for (path in imagePaths) {
+            // Decode the file into a Bitmap (you can also use a sampled decode for performance)
+            val bitmap = BitmapFactory.decodeFile(path) ?: continue
+
+            // Convert the Bitmap to an OpenCV Mat
+            val mat = bitmapToMat(bitmap) ?: continue
+
+            // Ensure the Mat is non-empty
+            if (!mat.empty()) {
+                // Calculate Laplacian variance (sharpness measure)
+                val variance = calculateLaplacianVariance(mat)
+
+                // Update maximum if this image is sharper
+                if (variance > maxVariance) {
+                    maxVariance = variance
+                    sharpestPath = path
+                }
+                // Release the Mat to avoid memory leaks
+                mat.release()
+            }
+        }
+
+        // Return the sharpest path and its variance
+        return Pair(sharpestPath, maxVariance)
+    }
     @Composable
     fun CameraPreviewScreen() {
         val context = LocalContext.current
@@ -100,36 +130,60 @@ class CameraActivity : ComponentActivity() {
         var optimalLightingDetected by rememberSaveable { mutableStateOf(false) }
         var showSuccessMessage by rememberSaveable { mutableStateOf(false) }
         var captureCompleted by rememberSaveable { mutableStateOf(false) }
+        var sharpestImagePath by rememberSaveable { mutableStateOf<String?>(null) }
     
         // Coroutine to periodically calculate averages
         LaunchedEffect(Unit) {
-            while (true) {
-                delay(1000)
-                val avgBrightness = brightnessList.averageOrNull() ?: 0.0
-                val avgGlare = glareList.averageOrNull() ?: 0.0
-    
-                statusMessage = when {
-                    avgBrightness < 81 -> "Brightness too low. Increase lighting."
-                    avgBrightness > 155 -> "Brightness too high. Reduce lighting."
-                    avgGlare > 20.0 -> "High glare detected. Adjust lighting."
-                    else -> "Lighting conditions are optimal."
+            // Offload the loop to a background dispatcher
+            withContext(Dispatchers.Default) {
+                while (true) {
+                    delay(1000)
+
+                    val avgBrightness: Double
+                    val avgGlare: Double
+
+                    // Safely compute averages here in background
+                    avgBrightness = brightnessList.averageOrNull() ?: 0.0
+                    avgGlare = glareList.averageOrNull() ?: 0.0
+
+                    // Switch to Main thread to update UI
+                    withContext(Dispatchers.Main) {
+                        statusMessage = when {
+                            avgBrightness < 81 -> "Brightness too low. Increase lighting."
+                            avgBrightness > 155 -> "Brightness too high. Reduce lighting."
+                            avgGlare > 20.0 -> "High glare detected. Adjust lighting."
+                            else -> "Lighting conditions are optimal."
+                        }
+                        optimalLightingDetected = statusMessage == "Lighting conditions are optimal."
+                        brightnessList.clear()
+                        glareList.clear()
+                    }
                 }
-    
-                optimalLightingDetected = statusMessage == "Lighting conditions are optimal."
-    
-                brightnessList.clear()
-                glareList.clear()
             }
         }
-    
+
+
         LaunchedEffect(optimalLightingDetected) {
             if (optimalLightingDetected && !captureCompleted) {
                 delay(2000)
                 if (optimalLightingDetected) {
-                    captureBurstImages(imageCapture, 5)
-                    showSuccessMessage = true
-                    captureCompleted = true
-                    imagePathList.clear()
+                    captureBurstImages(imageCapture, 5) {
+                        // Called after all images are saved
+                        showSuccessMessage = true
+                        captureCompleted = true
+
+                        // Now find the sharpest image off the main thread
+                        // This entire function is already a suspend function
+                        val (bestPath, bestVariance) = findSharpestImage(imagePathList)
+                        sharpestImagePath = bestPath
+
+                        // Clear & only keep the best
+                        imagePathList.clear()
+                        if (bestPath != null) {
+                            imagePathList.add(bestPath)
+                            Log.d("CameraActivity", "Sharpest image: $bestPath, variance=$bestVariance")
+                        }
+                    }
                 }
             }
         }
@@ -224,27 +278,51 @@ class CameraActivity : ComponentActivity() {
                 ) {
                     Text(text = "Capture Successful!", color = Color.Green, fontSize = 20.sp)
                 }
-    
-                LazyColumn(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(16.dp)
-                ) {
-                    items(imagePathList) { path ->
-                        Image(
-                            painter = rememberImagePainter(path),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                        )
+
+                LazyColumn {
+                    sharpestImagePath?.let { path ->
+                        item {
+                            // Decode the image again for display (sampled to e.g. 800x800)
+                            val sampledBitmap = decodeSampledBitmap(path, 800, 800)
+                            if (sampledBitmap != null) {
+                                val mat = bitmapToMat(sampledBitmap)
+                                val variance = mat?.let { calculateLaplacianVariance(it) } ?: 0.0
+                                mat?.release()
+
+                                Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                                    // Show the image (Coil can handle sampling too)
+                                    Image(
+                                        painter = rememberImagePainter(path),
+                                        contentDescription = "Captured Image",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                    )
+                                    Text(
+                                        text = "Laplacian Variance: $variance",
+                                        color = Color.Black,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = "Failed to load image: $path",
+                                    color = Color.Red,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
+                        }
                     }
                 }
-    
+
+
                 Button(
                     onClick = {
                         captureCompleted = false
                         showSuccessMessage = false
+                        sharpestImagePath = null
+                        imagePathList.clear()
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -252,8 +330,59 @@ class CameraActivity : ComponentActivity() {
                 ) {
                     Text(text = "Reset Capture")
                 }
+
+
+
+
             }
         }
+    }
+
+    private fun decodeSampledBitmap(path: String, reqWidth: Int, reqHeight: Int): Bitmap? {
+        // First decode with inJustDecodeBounds=true to check dimensions
+        val options = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(path, options)
+
+        // Calculate inSampleSize
+        options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+
+        // Decode bitmap with inSampleSize set
+        options.inJustDecodeBounds = false
+        return BitmapFactory.decodeFile(path, options)
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.run { outHeight to outWidth }
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
+
+    private fun calculateLaplacianVariance(mat: Mat): Double {
+        val laplacian = Mat()
+        Imgproc.Laplacian(mat, laplacian, mat.depth())
+
+        val mean = MatOfDouble()
+        val stddev = MatOfDouble()
+
+        // Correct call to Core.meanStdDev
+        Core.meanStdDev(laplacian, mean, stddev)
+
+        val variance = stddev[0, 0][0] * stddev[0, 0][0] // Variance = (StdDev)^2
+        laplacian.release()
+
+        return variance
     }
 
     private fun List<Double>.averageOrNull(): Double? = if (isEmpty()) null else average()
@@ -333,15 +462,18 @@ class CameraActivity : ComponentActivity() {
             null
         }
     }
-    private fun captureBurstImages(imageCapture: ImageCapture, totalCaptures: Int = 5) {
-        var currentCapture = 0
+    private fun captureBurstImages(
+        imageCapture: ImageCapture,
+        totalCaptures: Int = 5,
+        onComplete: () -> Unit
+    ) {
+        var remainingCaptures = totalCaptures
         val photoFiles = List(totalCaptures) { index ->
             File(externalMediaDirs.firstOrNull(), "IMG_${System.currentTimeMillis()}_$index.jpg")
         }
 
         GlobalScope.launch(Dispatchers.Main) {
-            while (currentCapture < totalCaptures) {
-                val photoFile = photoFiles[currentCapture]
+            photoFiles.forEach { photoFile ->
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
                 imageCapture.takePicture(
@@ -350,20 +482,35 @@ class CameraActivity : ComponentActivity() {
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                             GlobalScope.launch(Dispatchers.IO) {
+                                // Save path
                                 imagePathList.add(photoFile.absolutePath)
                                 Log.d("Burst", "Image saved: ${photoFile.absolutePath}")
+
+                                // Decrement remaining count
+                                remainingCaptures--
+
+                                // If all captures are done, invoke onComplete
+                                if (remainingCaptures == 0) {
+                                    withContext(Dispatchers.Main) {
+                                        onComplete()
+                                    }
+                                }
                             }
                         }
 
                         override fun onError(exception: ImageCaptureException) {
                             Log.e("Burst", "Error capturing image: ${exception.message}")
+                            remainingCaptures--
+                            if (remainingCaptures == 0) {
+                                onComplete()
+                            }
                         }
                     }
                 )
-                currentCapture++
             }
         }
     }
+
     private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
         return try {
             val plane = imageProxy.planes[0]
