@@ -20,15 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.*
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -37,7 +35,6 @@ import kotlinx.coroutines.*
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.MatOfPoint
-import org.opencv.core.MatOfPoint2f
 import org.opencv.imgproc.Imgproc
 import java.io.File
 import java.io.FileOutputStream
@@ -55,16 +52,17 @@ class CameraActivity : ComponentActivity() {
     private var rectHeight = 0
     private var imagePathList = mutableStateListOf<String>()
 
-
-
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize OpenCV
         if (!org.opencv.android.OpenCVLoader.initDebug()) {
             Log.e("OpenCV", "OpenCV initialization failed")
         } else {
             Log.d("OpenCV", "OpenCV initialization successful")
         }
+
         // Request Camera Permissions
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), 101)
@@ -79,29 +77,34 @@ class CameraActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        cameraExecutor.shutdown()
+        cameraExecutor.shutdown() // Only clean up executor
     }
+
+    override fun onStop() {
+        super.onStop()
+        // Do not manually unbind CameraX
+    }
+
 
     @Composable
     fun CameraPreviewScreen() {
         val context = this
         val previewView = remember { PreviewView(context) }
-        var brightnessText by remember { mutableStateOf("Calculating...") }
-        var statusMessage by remember { mutableStateOf("Analyzing...") }
+
+        var statusMessage by rememberSaveable { mutableStateOf("Analyzing...") }
         val brightnessList = remember { mutableStateListOf<Double>() }
         val glareList = remember { mutableStateListOf<Double>() }
-        var optimalLightingDetected by remember { mutableStateOf(false) } // Track optimal lighting detection
-        var showSuccessMessage by remember { mutableStateOf(false) } // Track capture success
-
+        var optimalLightingDetected by rememberSaveable { mutableStateOf(false) }
+        var showSuccessMessage by rememberSaveable { mutableStateOf(false) }
+        var captureCompleted by rememberSaveable { mutableStateOf(false) }
 
         // Coroutine to periodically calculate averages
         LaunchedEffect(Unit) {
             while (true) {
-                delay(1000) // Every second
+                delay(1000)
                 val avgBrightness = brightnessList.averageOrNull() ?: 0.0
                 val avgGlare = glareList.averageOrNull() ?: 0.0
 
-                // Update status message based on averages
                 statusMessage = when {
                     avgBrightness < 81 -> "Brightness too low. Increase lighting."
                     avgBrightness > 155 -> "Brightness too high. Reduce lighting."
@@ -109,22 +112,21 @@ class CameraActivity : ComponentActivity() {
                     else -> "Lighting conditions are optimal."
                 }
 
-                // Check if lighting conditions are optimal
                 optimalLightingDetected = statusMessage == "Lighting conditions are optimal."
 
-                // Clear lists for next interval
                 brightnessList.clear()
                 glareList.clear()
             }
         }
 
         LaunchedEffect(optimalLightingDetected) {
-            if (optimalLightingDetected) {
-                delay(2000) // Wait for 2 seconds to ensure stable conditions
-                if (optimalLightingDetected) { // Confirm conditions are still optimal
-                        captureBurstImages(imageCapture, 5)
-
-                    showSuccessMessage = true // Show success message
+            if (optimalLightingDetected && !captureCompleted) {
+                delay(2000)
+                if (optimalLightingDetected) {
+                    captureBurstImages(imageCapture, 5)
+                    showSuccessMessage = true
+                    captureCompleted = true
+                    imagePathList.clear()
                 }
             }
         }
@@ -206,11 +208,7 @@ class CameraActivity : ComponentActivity() {
                     .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = statusMessage,
-                    color = Color.White,
-                    fontSize = 18.sp
-                )
+                Text(text = statusMessage, color = Color.White, fontSize = 18.sp)
             }
 
             if (showSuccessMessage) {
@@ -220,31 +218,36 @@ class CameraActivity : ComponentActivity() {
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = "Capture Successful!",
-                        color = Color.Green,
-                        fontSize = 20.sp
-                    )
+                    Text(text = "Capture Successful!", color = Color.Green, fontSize = 20.sp)
                 }
-                Column(
+
+                LazyColumn(
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
+                        .align(Alignment.BottomCenter)
                         .padding(16.dp)
                 ) {
-                    Text(text = statusMessage, color = Color.White, fontSize = 18.sp)
-                    Text(text = "Captured Image Paths:", color = Color.White, fontSize = 16.sp)
-                    LazyColumn {
-                        items(imagePathList) { path ->
-                            Text(text = path, color = Color.Gray, fontSize = 14.sp)
-                        }
+                    items(imagePathList) { path ->
+                        Text(text = path, color = Color.Gray, fontSize = 14.sp)
                     }
                 }
+            }
+
+            Button(
+                onClick = {
+                    captureCompleted = false
+                    showSuccessMessage = false
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+            ) {
+                Text(text = "Reset Capture")
             }
         }
     }
 
-    // Extension to calculate average or return null
     private fun List<Double>.averageOrNull(): Double? = if (isEmpty()) null else average()
+
     private fun analyzeBrightRegions(mat: Mat): Double {
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
@@ -257,30 +260,18 @@ class CameraActivity : ComponentActivity() {
         Imgproc.findContours(binary, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
 
         var glareArea = 0.0
-
         for (contour in contours) {
             val area = Imgproc.contourArea(contour)
-            if (area > 100) { // Ignore small noise
-                glareArea += area // Add the area of bright regions
+            if (area > 100) {
+                glareArea += area
             }
         }
 
         gray.release()
         binary.release()
-
-        return glareArea // Return the total glare area
+        return glareArea
     }
 
-    private fun bitmapToMat(bitmap: Bitmap): Mat? {
-        return try {
-            val mat = Mat()
-            org.opencv.android.Utils.bitmapToMat(bitmap, mat)
-            mat
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
     private fun calculateBrightness(mat: Mat): Double {
         return try {
             val gray = Mat()
@@ -294,6 +285,75 @@ class CameraActivity : ComponentActivity() {
         }
     }
 
+    private fun cropImageProxyToRect(
+        imageProxy: ImageProxy,
+        rectX: Int,
+        rectY: Int,
+        rectWidth: Int,
+        rectHeight: Int,
+        previewWidth: Int,
+        previewHeight: Int
+    ): Bitmap? {
+        val bitmap = imageProxyToBitmap(imageProxy) ?: return null
+
+        val scaleX = bitmap.width.toFloat() / previewWidth
+        val scaleY = bitmap.height.toFloat() / previewHeight
+
+        val cropX = (rectX * scaleX).toInt()
+        val cropY = (rectY * scaleY).toInt()
+        val cropWidth = (rectWidth * scaleX).toInt()
+        val cropHeight = (rectHeight * scaleY).toInt()
+
+        if (cropWidth <= 0 || cropHeight <= 0 || cropX < 0 || cropY < 0 ||
+            cropX + cropWidth > bitmap.width || cropY + cropHeight > bitmap.height
+        ) {
+            Log.e("CropError", "Invalid crop dimensions")
+            return null
+        }
+
+        return Bitmap.createBitmap(bitmap, cropX, cropY, cropWidth, cropHeight)
+    }
+    private fun bitmapToMat(bitmap: Bitmap): Mat? {
+        return try {
+            val mat = Mat()
+            org.opencv.android.Utils.bitmapToMat(bitmap, mat)
+            mat
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+    private fun captureBurstImages(imageCapture: ImageCapture, totalCaptures: Int = 5) {
+        var currentCapture = 0
+        val photoFiles = List(totalCaptures) { index ->
+            File(externalMediaDirs.firstOrNull(), "IMG_${System.currentTimeMillis()}_$index.jpg")
+        }
+
+        GlobalScope.launch(Dispatchers.Main) {
+            while (currentCapture < totalCaptures) {
+                val photoFile = photoFiles[currentCapture]
+                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+                imageCapture.takePicture(
+                    outputOptions,
+                    ContextCompat.getMainExecutor(this@CameraActivity),
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            GlobalScope.launch(Dispatchers.IO) {
+                                imagePathList.add(photoFile.absolutePath)
+                                Log.d("Burst", "Image saved: ${photoFile.absolutePath}")
+                            }
+                        }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            Log.e("Burst", "Error capturing image: ${exception.message}")
+                        }
+                    }
+                )
+                currentCapture++
+            }
+        }
+    }
     private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
         return try {
             val plane = imageProxy.planes[0]
@@ -327,117 +387,6 @@ class CameraActivity : ComponentActivity() {
             null
         }
     }
-    private fun cropImageProxyToRect(
-        imageProxy: ImageProxy,
-        rectX: Int,
-        rectY: Int,
-        rectWidth: Int,
-        rectHeight: Int,
-        previewWidth: Int,
-        previewHeight: Int
-    ): Bitmap? {
-        val bitmap = imageProxyToBitmap(imageProxy) ?: return null
-
-        // Map the rectangle dimensions to the bitmap size
-        val scaleX = bitmap.width.toFloat() / previewWidth
-        val scaleY = bitmap.height.toFloat() / previewHeight
-
-        val cropX = (rectX * scaleX).toInt()
-        val cropY = (rectY * scaleY).toInt()
-        val cropWidth = (rectWidth * scaleX).toInt()
-        val cropHeight = (rectHeight * scaleY).toInt()
-
-        if (cropWidth <= 0 || cropHeight <= 0 || cropX < 0 || cropY < 0 ||
-            cropX + cropWidth > bitmap.width || cropY + cropHeight > bitmap.height
-        ) {
-            Log.e("CropError", "Invalid crop dimensions: x=$cropX, y=$cropY, width=$cropWidth, height=$cropHeight")
-            return null
-        }
-
-        return Bitmap.createBitmap(bitmap, cropX, cropY, cropWidth, cropHeight)
-    }
-    private fun captureBurstImages(imageCapture: ImageCapture, totalCaptures: Int = 5) {
-        var currentCapture = 0
-        val photoFiles = List(totalCaptures) { index ->
-            File(externalMediaDirs.firstOrNull(), "CROPPED_IMG_${System.currentTimeMillis()}_$index.jpg")
-        }
-
-        GlobalScope.launch(Dispatchers.Main) {
-            while (currentCapture < totalCaptures) {
-                val photoFile = photoFiles[currentCapture]
-                val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-                imageCapture.takePicture(
-                    outputOptions,
-                    ContextCompat.getMainExecutor(this@CameraActivity),
-                    object : ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                            GlobalScope.launch(Dispatchers.IO) {
-                                val bitmap = BitmapFactory.decodeFile(photoFile.absolutePath)
-                                if (bitmap != null) {
-                                    val croppedBitmap = cropToCreditCardAspect(bitmap)
-                                    if (croppedBitmap != null) {
-                                        saveBitmap(croppedBitmap, photoFile)
-                                        Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
-                                        // Save the image path
-                                        imagePathList.add(photoFile.absolutePath)
-                                        Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
-                                    }
-                                } else {
-                                    Log.e("Burst", "Failed to decode bitmap for image ${currentCapture + 1}")
-                                }
-                            }
-                        }
-
-                        override fun onError(exception: ImageCaptureException) {
-                            Log.e("Burst", "Error capturing image ${currentCapture + 1}: ${exception.message}")
-                        }
-                    }
-                )
-
-                currentCapture++
-            }
-            Log.d("Burst", "Captured and cropped $totalCaptures images.")
-        }
-    }
-
-
-    private fun cropToCreditCardAspect(bitmap: Bitmap): Bitmap? {
-        val creditCardAspectRatio = 3.37f / 2.125f // Aspect ratio 3.37:2.125
-
-        val bitmapWidth = bitmap.width
-        val bitmapHeight = bitmap.height
-
-        val rectWidth = bitmapWidth * 0.7f
-        val rectHeight = rectWidth / creditCardAspectRatio
-        val rectLeft = (bitmapWidth - rectWidth) / 2
-        val rectTop = (bitmapHeight - rectHeight) / 2
-
-        val cropLeft = rectLeft.coerceAtLeast(0f).toInt()
-        val cropTop = rectTop.coerceAtLeast(0f).toInt()
-        val cropWidth = rectWidth.coerceAtMost(bitmapWidth - cropLeft.toFloat()).toInt()
-        val cropHeight = rectHeight.coerceAtMost(bitmapHeight - cropTop.toFloat()).toInt()
-
-        return try {
-            Bitmap.createBitmap(bitmap, cropLeft, cropTop, cropWidth, cropHeight)
-        } catch (e: Exception) {
-            Log.e("Crop", "Error cropping to credit card aspect: ${e.message}")
-            null
-        }
-    }
-
-    private fun saveBitmap(bitmap: Bitmap, file: File) {
-        try {
-            FileOutputStream(file).use { outputStream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
-                outputStream.flush()
-            }
-            Log.d("Crop", "Cropped image saved: ${file.absolutePath}")
-        } catch (e: Exception) {
-            Log.e("Crop", "Error saving cropped image: ${e.message}")
-        }
-    }
-
     @Composable
     fun RectangleOverlay(
         modifier: Modifier = Modifier,
