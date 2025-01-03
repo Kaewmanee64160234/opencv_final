@@ -13,6 +13,7 @@ import androidx.annotation.RequiresApi
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,10 +28,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import coil.compose.rememberImagePainter
 import kotlinx.coroutines.*
 import org.opencv.core.Core
 import org.opencv.core.Mat
@@ -88,37 +91,37 @@ class CameraActivity : ComponentActivity() {
 
     @Composable
     fun CameraPreviewScreen() {
-        val context = this
+        val context = LocalContext.current
         val previewView = remember { PreviewView(context) }
-
+    
         var statusMessage by rememberSaveable { mutableStateOf("Analyzing...") }
         val brightnessList = remember { mutableStateListOf<Double>() }
         val glareList = remember { mutableStateListOf<Double>() }
         var optimalLightingDetected by rememberSaveable { mutableStateOf(false) }
         var showSuccessMessage by rememberSaveable { mutableStateOf(false) }
         var captureCompleted by rememberSaveable { mutableStateOf(false) }
-
+    
         // Coroutine to periodically calculate averages
         LaunchedEffect(Unit) {
             while (true) {
                 delay(1000)
                 val avgBrightness = brightnessList.averageOrNull() ?: 0.0
                 val avgGlare = glareList.averageOrNull() ?: 0.0
-
+    
                 statusMessage = when {
                     avgBrightness < 81 -> "Brightness too low. Increase lighting."
                     avgBrightness > 155 -> "Brightness too high. Reduce lighting."
                     avgGlare > 20.0 -> "High glare detected. Adjust lighting."
                     else -> "Lighting conditions are optimal."
                 }
-
+    
                 optimalLightingDetected = statusMessage == "Lighting conditions are optimal."
-
+    
                 brightnessList.clear()
                 glareList.clear()
             }
         }
-
+    
         LaunchedEffect(optimalLightingDetected) {
             if (optimalLightingDetected && !captureCompleted) {
                 delay(2000)
@@ -132,7 +135,7 @@ class CameraActivity : ComponentActivity() {
         }
 
         LaunchedEffect(Unit) {
-            val cameraProvider = ProcessCameraProvider.getInstance(context).get()
+            val cameraProvider = ProcessCameraProvider.getInstance(this@CameraActivity).get()
 
             val preview = Preview.Builder()
                 .build()
@@ -175,7 +178,7 @@ class CameraActivity : ComponentActivity() {
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
-                    context,
+                    this@CameraActivity, // Use the activity itself as LifecycleOwner
                     cameraSelector,
                     preview,
                     imageCapture,
@@ -186,32 +189,33 @@ class CameraActivity : ComponentActivity() {
             }
         }
 
+
         Box(modifier = Modifier.fillMaxSize()) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { previewView }
-            )
-
-            RectangleOverlay(
-                modifier = Modifier.align(Alignment.Center),
-                onOverlayPositioned = { x, y, width, height ->
-                    rectX = x
-                    rectY = y
-                    rectWidth = width
-                    rectHeight = height
+            if (!captureCompleted) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { previewView }
+                )
+    
+                RectangleOverlay(
+                    modifier = Modifier.align(Alignment.Center),
+                    onOverlayPositioned = { x, y, width, height ->
+                        rectX = x
+                        rectY = y
+                        rectWidth = width
+                        rectHeight = height
+                    }
+                )
+    
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(text = statusMessage, color = Color.White, fontSize = 18.sp)
                 }
-            )
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(text = statusMessage, color = Color.White, fontSize = 18.sp)
-            }
-
-            if (showSuccessMessage) {
+            } else {
                 Column(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -220,28 +224,34 @@ class CameraActivity : ComponentActivity() {
                 ) {
                     Text(text = "Capture Successful!", color = Color.Green, fontSize = 20.sp)
                 }
-
+    
                 LazyColumn(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(16.dp)
                 ) {
                     items(imagePathList) { path ->
-                        Text(text = path, color = Color.Gray, fontSize = 14.sp)
+                        Image(
+                            painter = rememberImagePainter(path),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(200.dp)
+                        )
                     }
                 }
-            }
-
-            Button(
-                onClick = {
-                    captureCompleted = false
-                    showSuccessMessage = false
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp)
-            ) {
-                Text(text = "Reset Capture")
+    
+                Button(
+                    onClick = {
+                        captureCompleted = false
+                        showSuccessMessage = false
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp)
+                ) {
+                    Text(text = "Reset Capture")
+                }
             }
         }
     }
