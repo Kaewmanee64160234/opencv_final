@@ -15,6 +15,8 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Text
@@ -51,6 +53,9 @@ class CameraActivity : ComponentActivity() {
     private var rectY = 0
     private var rectWidth = 0
     private var rectHeight = 0
+    private var imagePathList = mutableStateListOf<String>()
+
+
 
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +93,7 @@ class CameraActivity : ComponentActivity() {
         var optimalLightingDetected by remember { mutableStateOf(false) } // Track optimal lighting detection
         var showSuccessMessage by remember { mutableStateOf(false) } // Track capture success
 
+
         // Coroutine to periodically calculate averages
         LaunchedEffect(Unit) {
             while (true) {
@@ -116,7 +122,8 @@ class CameraActivity : ComponentActivity() {
             if (optimalLightingDetected) {
                 delay(2000) // Wait for 2 seconds to ensure stable conditions
                 if (optimalLightingDetected) { // Confirm conditions are still optimal
-                    captureBurstImages(imageCapture, 5) // Capture a single image
+                        captureBurstImages(imageCapture, 5)
+
                     showSuccessMessage = true // Show success message
                 }
             }
@@ -218,6 +225,19 @@ class CameraActivity : ComponentActivity() {
                         color = Color.Green,
                         fontSize = 20.sp
                     )
+                }
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp)
+                ) {
+                    Text(text = statusMessage, color = Color.White, fontSize = 18.sp)
+                    Text(text = "Captured Image Paths:", color = Color.White, fontSize = 16.sp)
+                    LazyColumn {
+                        items(imagePathList) { path ->
+                            Text(text = path, color = Color.Gray, fontSize = 14.sp)
+                        }
+                    }
                 }
             }
         }
@@ -358,6 +378,9 @@ class CameraActivity : ComponentActivity() {
                                     val croppedBitmap = cropToCreditCardAspect(bitmap)
                                     if (croppedBitmap != null) {
                                         saveBitmap(croppedBitmap, photoFile)
+                                        Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
+                                        // Save the image path
+                                        imagePathList.add(photoFile.absolutePath)
                                         Log.d("Burst", "Image ${currentCapture + 1} saved: ${photoFile.absolutePath}")
                                     }
                                 } else {
